@@ -55,7 +55,7 @@ Restart, then open **Settings → Token Pulse**.
 
 ## FAQ
 
-- **Everything shows 0?** Make sure `~/.dsh/sessions` contains session logs with a `usage` field.
+- **Everything shows 0?** Make sure `$DSH_HOME/sessions` contains session logs with a `usage` field.
 - **Does it go online?** No. Fully local.
 - **Timezone?** Fixed to Asia/Shanghai, weeks start on Monday.
 - **How to reset?** Settings page → ⋯ menu (top-right) → Reset history.

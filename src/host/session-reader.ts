@@ -1,4 +1,5 @@
 import type { RawUsageEvent } from "../aggregation.ts";
+import { sessionsDir } from "./dsh-home.ts";
 
 /** zstd frame magic: bytes 28 B5 2F FD, read as UInt32LE. */
 const ZSTD_MAGIC = 0xfd2fb528;
@@ -181,7 +182,7 @@ export function parseUsageEvents(events: SessionEvent[]): RawUsageEvent[] {
  * current process) — historical sessions from previous processes are NOT in it.
  * The old implementation returned early whenever any live session had events,
  * so it never scanned the disk and old sessions never showed up. Here we ALWAYS
- * read the whole ~/.dsh/sessions tree and merge live events on top, deduping by
+ * read the whole <DSH_HOME>/sessions tree and merge live events on top, deduping by
  * sessionId:seq (events carry no sessionId; the disk path derives it from the
  * session directory name).
  */
@@ -202,13 +203,12 @@ export async function readAllUsageEvents(ctx: any): Promise<RawUsageEvent[]> {
     allEvents.push({ ...o, sid });
   };
 
-  // 1) Full history: scan ~/.dsh/sessions (all sessions, including old ones).
+  // 1) Full history: scan <DSH_HOME>/sessions (all sessions, including old ones).
   try {
     const { readdirSync, existsSync } = await import("node:fs");
     const { join, basename, dirname } = await import("node:path");
-    const home = process.env.HOME ?? "/home/dell";
-    const sessionsDir = join(home, ".dsh", "sessions");
-    if (existsSync(sessionsDir)) {
+    const dir = sessionsDir();
+    if (existsSync(dir)) {
       const files: string[] = [];
       (function walk(dir: string) {
         try {
@@ -218,7 +218,7 @@ export async function readAllUsageEvents(ctx: any): Promise<RawUsageEvent[]> {
             else if (entry.name === "session.jsonl.zstd" || entry.name === "session.jsonl") files.push(p);
           }
         } catch {}
-      })(sessionsDir);
+      })(dir);
 
       for (const f of files) {
         // <root>/<workspace>/<sessionId>/session.jsonl.zstd
@@ -273,7 +273,7 @@ export async function readAllUsageEvents(ctx: any): Promise<RawUsageEvent[]> {
  * Read usage from LIVE sessions only (ctx.sessions.list() = sessions created
  * or resumed in the current process). Cheap — no disk scan. Used by
  * store.refresh() after init() has already captured the full disk history,
- * so refreshes do not re-decompress ~/.dsh/sessions on every tick.
+ * so refreshes do not re-decompress <DSH_HOME>/sessions on every tick.
  *
  * A live session's `events` includes its full stored log, so the result is a
  * complete snapshot per live session; callers must REPLACE (not append) that

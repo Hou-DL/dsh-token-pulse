@@ -34,7 +34,7 @@ export class HeatmapStore {
   /**
    * Refresh from LIVE sessions only. The full disk scan happened once at
    * init(); afterwards only live (in-memory) sessions change, so re-scanning
-   * the whole ~/.dsh/sessions tree on every refresh would be wasted work.
+   * the whole <DSH_HOME>/sessions tree on every refresh would be wasted work.
    *
    * A live session's snapshot includes its full stored log, so we REPLACE that
    * session's events in place (never append) — history for sessions that are

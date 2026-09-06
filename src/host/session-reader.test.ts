@@ -26,7 +26,7 @@ describe("readAllUsageEvents", () => {
 
   it("reads usage from ALL sessions on disk (old + new), not only live ones", async () => {
     home = mkdtempSync(join(tmpdir(), "heatmap-sess-"));
-    const root = join(home, ".dsh", "sessions");
+    const root = join(home, "sessions");
     const t0 = Date.UTC(2026, 7, 1, 8, 0, 0);
 
     // Old session A: only on disk, NOT live in ctx.sessions
@@ -74,7 +74,9 @@ describe("readAllUsageEvents", () => {
     const ctx = { sessions: { list: async () => [liveC] } };
 
     const prevHome = process.env.HOME;
+    const prevDshHome = process.env.DSH_HOME;
     process.env.HOME = home;
+    process.env.DSH_HOME = home;
     try {
       const out = await readAllUsageEvents(ctx as any);
       // A + B + C(turn1, from disk deduped with live seq1) + C(turn2, live-only tail) = 4
@@ -88,25 +90,63 @@ describe("readAllUsageEvents", () => {
       const cInputs = out.filter((e) => e.model === "mC").map((e) => e.usage.inputTokens).sort((a, b) => a - b);
       expect(cInputs).toEqual([300, 400]);
     } finally {
-      process.env.HOME = prevHome;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDshHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDshHome;
+    }
+  });
+
+  it("honors $DSH_HOME for the sessions scan (multi-install safe)", async () => {
+    home = mkdtempSync(join(tmpdir(), "heatmap-dshhome-"));
+    const sessionsRoot = join(home, "sessions");
+    const t0 = Date.UTC(2026, 7, 2, 8, 0, 0);
+    writeSession(sessionsRoot, "--ws--", "sess-dsh", [
+      makeEvent("assistant/message", 1, t0, {
+        message: { source: { provider: "pD", model: "mD" } },
+        usage: { inputTokens: 500, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10 },
+        turn: 1, step: 1,
+      }),
+    ]);
+    // $HOME points elsewhere with NO sessions: without $DSH_HOME support this reads nothing.
+    const otherHome = mkdtempSync(join(tmpdir(), "heatmap-otherhome-"));
+    const prevHome = process.env.HOME;
+    const prevDshHome = process.env.DSH_HOME;
+    process.env.HOME = otherHome;
+    process.env.DSH_HOME = home;
+    try {
+      const out = await readAllUsageEvents({ sessions: { list: async () => [] } } as any);
+      expect(out.length).toBe(1);
+      expect(out[0].model).toBe("mD");
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDshHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDshHome;
+      rmSync(otherHome, { recursive: true, force: true });
     }
   });
 
   it("returns empty when no sessions exist", async () => {
     home = mkdtempSync(join(tmpdir(), "heatmap-sess-"));
     const prevHome = process.env.HOME;
+    const prevDshHome = process.env.DSH_HOME;
     process.env.HOME = home;
+    process.env.DSH_HOME = home;
     try {
       const out = await readAllUsageEvents({ sessions: { list: async () => [] } } as any);
       expect(out).toEqual([]);
     } finally {
-      process.env.HOME = prevHome;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDshHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDshHome;
     }
   });
 
   it("readLiveUsageEvents returns ONLY live sessions (no disk scan), sid-tagged", async () => {
     home = mkdtempSync(join(tmpdir(), "heatmap-sess-"));
-    const root = join(home, ".dsh", "sessions");
+    const root = join(home, "sessions");
     const t0 = Date.UTC(2026, 7, 1, 8, 0, 0);
     // Session on disk but NOT live: must NOT appear in the live-only read.
     writeSession(root, "--ws--", "old-session-a", [
@@ -128,14 +168,19 @@ describe("readAllUsageEvents", () => {
     };
     const ctx = { sessions: { list: async () => [liveB] } };
     const prevHome = process.env.HOME;
+    const prevDshHome = process.env.DSH_HOME;
     process.env.HOME = home;
+    process.env.DSH_HOME = home;
     try {
       const out = await readLiveUsageEvents(ctx as any);
       expect(out.length).toBe(1); // only the live session, disk-only A excluded
       expect(out[0].provider).toBe("pB");
       expect(out[0].sid).toBe("live-session-b"); // sid tagged for store refresh replace
     } finally {
-      process.env.HOME = prevHome;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDshHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDshHome;
     }
   });
 });

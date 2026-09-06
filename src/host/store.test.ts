@@ -26,7 +26,7 @@ describe("HeatmapStore refresh (live-only, disk scanned once at init)", () => {
 
   it("keeps non-live history and replaces live sessions without double counting", async () => {
     home = mkdtempSync(join(tmpdir(), "heatmap-store-"));
-    const root = join(home, ".dsh", "sessions");
+    const root = join(home, "sessions");
     const t0 = Date.UTC(2026, 7, 1, 8, 0, 0);
     const dayKey = "2026-08-01";
 
@@ -65,7 +65,9 @@ describe("HeatmapStore refresh (live-only, disk scanned once at init)", () => {
     const ctx: any = { sessions: { list: async () => liveList } };
 
     const prevHome = process.env.HOME;
+    const prevDshHome = process.env.DSH_HOME;
     process.env.HOME = home;
+    process.env.DSH_HOME = home;
     try {
       const store = new HeatmapStore(ctx);
       await store.init();
@@ -93,7 +95,10 @@ describe("HeatmapStore refresh (live-only, disk scanned once at init)", () => {
       expect(day3.totalTokens).toBe(700);
       expect(day3.count).toBe(4);
     } finally {
-      process.env.HOME = prevHome;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDshHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDshHome;
     }
   });
 });

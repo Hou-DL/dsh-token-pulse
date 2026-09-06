@@ -55,7 +55,7 @@ dsh plugin --profile web add "git+https://gitee.com/HouDL/dsh-token-pulse.git"
 
 ## 常见问题
 
-- **显示 0？** 确认 `~/.dsh/sessions` 下有含 `usage` 字段的会话日志。
+- **显示 0？** 确认 `$DSH_HOME/sessions` 下有含 `usage` 字段的会话日志。
 - **会联网吗？** 不会，纯本地统计。
 - **时区？** 固定北京时区，周一为周起始。
 - **如何重置？** 设置页右上角 ⋯ → 「重置历史」。

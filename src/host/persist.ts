@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync, copyFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { dshHome } from "./dsh-home.ts";
 import type { DayAgg } from "../aggregation.ts";
 
 export type PersistedDay = {
@@ -24,7 +25,7 @@ export type PersistedFile = {
 };
 
 function persistPath(): string {
-  const dir = join(homedir(), ".dsh", "storages", "dsh-token-pulse");
+  const dir = join(dshHome(), "storages", "dsh-token-pulse");
   return join(dir, "daily.json");
 }
 
@@ -44,7 +45,7 @@ function migrateLegacyPersist(): void {
   try {
     const next = persistPath();
     if (existsSync(next)) return;
-    const legacy = join(homedir(), ".dsh", "storages", "dsh-token-heatmap", "daily.json");
+    const legacy = join(dshHome(), "storages", "dsh-token-heatmap", "daily.json");
     if (!existsSync(legacy)) return;
     mkdirSync(dirname(next), { recursive: true });
     copyFileSync(legacy, next);
@@ -55,19 +56,18 @@ function migrateLegacyPersist(): void {
 
 function libDailyPath(): string | null {
   try {
-    // Host writes a second copy to the installed plugin's lib/ so browser can fetch via /plugins/dsh-token-pulse/daily.json
-    const candidates = [
-      join(homedir(), ".dsh", "profiles", "web", "node_modules", "dsh-token-pulse", "lib", "daily.json"),
-      join("/home/dell/testdsh/dsh-token-pulse/lib/daily.json"),
-    ];
-    for (const c of candidates) {
-      try {
-        mkdirSync(dirname(c), { recursive: true });
-        // probe writable by touching
-        return c;
-      } catch {}
+    // Resolve the installed plugin's own lib/ from this module's location
+    // instead of hardcoding a profile name: this works under any profile and
+    // any DSH install. The browser client fetches via the /api route, so this
+    // copy is only a legacy fallback.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const c = join(here, "daily.json");
+    try {
+      mkdirSync(here, { recursive: true });
+      return c;
+    } catch {
+      return null;
     }
-    return candidates[0];
   } catch {
     return null;
   }
@@ -146,16 +146,11 @@ export function savePersisted(days: Map<string, DayAgg>): void {
     const tmp = p + ".tmp";
     writeFileSync(tmp, json, "utf-8");
     renameSync(tmp, p);
-    // Also write to lib/ for browser fetch via /plugins/dsh-token-pulse/daily.json
+    // Also write to lib/ (next to this module) for browser fetch via /plugins/dsh-token-pulse/daily.json
     const libPath = libDailyPath();
     if (libPath) {
       try {
         writeFileSync(libPath, json, "utf-8");
-      } catch {}
-      // Also try the workspace copy for dev
-      try {
-        const wsLib = join("/home/dell/testdsh/dsh-token-pulse/lib/daily.json");
-        if (wsLib !== libPath) writeFileSync(wsLib, json, "utf-8");
       } catch {}
     }
   } catch {
