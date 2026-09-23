@@ -4,6 +4,8 @@ import * as React from "react";
 import { StatsCards } from "./StatsCards.tsx";
 import { HeatmapGrid, type ViewKind, type LevelThresholds, DEFAULT_THRESHOLDS } from "./HeatmapGrid.tsx";
 import { ModelTop5 } from "./ModelTop5.tsx";
+import { TrendChart } from "./TrendChart.tsx";
+import { en as enDict } from "./locales.ts";
 import { useHeatmapData, useHeatmapView, getAutoRefreshMinutes, setAutoRefreshMinutes } from "./hooks.ts";
 import type { DayAgg } from "../aggregation.ts";
 
@@ -53,6 +55,12 @@ export function SettingsSection({ t, ctx, days: injectedDays, totals: injectedTo
   // ⋯ 菜单：显式开关 + 点击外部自动收回
 
   const days = injectedDays ?? computedDays;
+  // 趋势图用全量历史（aggregated.byDay），与上面的周/月视图解耦：
+  // days 是按视图窗口裁剪的，月视图下看不到上月的天
+  const allDays: DayAgg[] = React.useMemo(() => {
+    if (aggregated?.byDay) return [...aggregated.byDay.values()];
+    return days ?? [];
+  }, [aggregated, days]);
   const totals = injectedTotals ?? aggregated?.totals;
   const viewTopModelsRaw = computedTopModels.length ? computedTopModels : (aggregated?.topModels ?? []);
   const viewTopProvidersRaw = computedTopProviders.length ? computedTopProviders : (aggregated?.topProviders ?? []);
@@ -317,6 +325,14 @@ export function SettingsSection({ t, ctx, days: injectedDays, totals: injectedTo
         >
           {t("heatmap.empty")}
         </div>
+      ) : null}
+      {/* 用量趋势线图：横轴时间、纵轴用量、每模型一条线（Top5 可开关）；固定最近 7/30 天，与上面的视图选择解耦 */}
+      {allDays.some((d) => d.totalTokens > 0) ? (
+        <TrendChart
+          t={lang === "en" ? (k: string, p?: any) => ((enDict as any)[k] ?? t(k, p)) : t}
+          days={allDays}
+          isEn={lang === "en"}
+        />
       ) : null}
     </section>
   );

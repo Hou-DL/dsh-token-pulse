@@ -34,6 +34,13 @@ export const zh: Record<string, string> = {
   "model.tokens": "{count} tokens",
   "provider.top5": "Top 5 供应商",
   "provider.winner": "当日最常用供应商",
+  "trend.title": "用量趋势",
+  "trend.hint": "按模型的每日 Token 用量",
+  "trend.range7": "近一周",
+  "trend.range30": "近一月",
+  "trend.range90": "近90天",
+  "trend.empty": "所选范围内暂无数据",
+  "trend.legend.hint": "点击图例可显示/隐藏",
   "common.tokens": "tokens",
 };
 
@@ -73,6 +80,13 @@ export const en: Record<string, string> = {
   "model.tokens": "{count} tokens",
   "provider.top5": "Top 5 Providers",
   "provider.winner": "Daily winner (provider)",
+  "trend.title": "Usage Trend",
+  "trend.hint": "Daily token usage per model",
+  "trend.range7": "7 days",
+  "trend.range30": "30 days",
+  "trend.range90": "90 days",
+  "trend.empty": "No data in this range",
+  "trend.legend.hint": "Click legend to toggle",
   "common.tokens": "tokens",
 };
 
