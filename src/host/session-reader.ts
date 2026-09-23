@@ -215,7 +215,9 @@ export async function readAllUsageEvents(ctx: any): Promise<RawUsageEvent[]> {
           for (const entry of readdirSync(dir, { withFileTypes: true })) {
             const p = join(dir, entry.name);
             if (entry.isDirectory()) walk(p);
-            else if (entry.name === "session.jsonl.zstd" || entry.name === "session.jsonl") files.push(p);
+            // session.jsonl[.zstd] (legacy) and session.v3.jsonl[.zstd] (current DSH
+            // session format; vN prefix may keep evolving — accept any version).
+            else if (/^session(\.v\d+)?\.jsonl(\.zstd)?$/.test(entry.name)) files.push(p);
           }
         } catch {}
       })(dir);

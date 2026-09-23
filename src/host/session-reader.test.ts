@@ -9,12 +9,12 @@ function makeEvent(type: string, seq: number, time: number, data: any = {}) {
   return { type, seq, time, data };
 }
 
-function writeSession(root: string, ws: string, sid: string, events: any[]) {
+function writeSession(root: string, ws: string, sid: string, events: any[], fileName = "session.jsonl.zstd") {
   const dir = join(root, ws, sid);
   mkdirSync(dir, { recursive: true });
   const lines = [JSON.stringify({ type: "session", version: 0, id: sid, createdAt: Date.now() })];
   for (const ev of events) lines.push(JSON.stringify(ev));
-  writeFileSync(join(dir, "session.jsonl.zstd"), zstdCompressSync(Buffer.from(lines.join("\n") + "\n")));
+  writeFileSync(join(dir, fileName), zstdCompressSync(Buffer.from(lines.join("\n") + "\n")));
 }
 
 describe("readAllUsageEvents", () => {
@@ -89,6 +89,33 @@ describe("readAllUsageEvents", () => {
       // Session C: turn1 (300, from disk, deduped with live seq1) + turn2 (400, live-only tail, not on disk)
       const cInputs = out.filter((e) => e.model === "mC").map((e) => e.usage.inputTokens).sort((a, b) => a - b);
       expect(cInputs).toEqual([300, 400]);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDshHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDshHome;
+    }
+  });
+
+  it("reads session.v3.jsonl.zstd files (new DSH session log name)", async () => {
+    home = mkdtempSync(join(tmpdir(), "heatmap-v3-"));
+    const root = join(home, "sessions");
+    const t0 = Date.UTC(2026, 7, 2, 8, 0, 0);
+    writeSession(root, "--ws--", "v3-session", [
+      makeEvent("assistant/message", 1, t0, {
+        message: { source: { provider: "pV", model: "mV" } },
+        usage: { inputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 30 },
+        turn: 1, step: 1,
+      }),
+    ], "session.v3.jsonl.zstd");
+    const prevHome = process.env.HOME;
+    const prevDshHome = process.env.DSH_HOME;
+    process.env.HOME = home;
+    process.env.DSH_HOME = home;
+    try {
+      const out = await readAllUsageEvents({ sessions: { list: async () => [] } } as any);
+      expect(out.length).toBe(1);
+      expect(out[0].model).toBe("mV");
     } finally {
       if (prevHome === undefined) delete process.env.HOME;
       else process.env.HOME = prevHome;

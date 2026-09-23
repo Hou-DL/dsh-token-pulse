@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
 import { HeatmapStore } from "./store.js";
+import { loadPersisted } from "./persist.js";
 
 function makeEvent(type: string, seq: number, time: number, data: any = {}) {
   return { type, seq, time, data };
@@ -94,6 +95,40 @@ describe("HeatmapStore refresh (live-only, disk scanned once at init)", () => {
       const day3 = store.getAggregated().byDay.get(dayKey)!;
       expect(day3.totalTokens).toBe(700);
       expect(day3.count).toBe(4);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDshHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDshHome;
+    }
+  });
+
+  it("keeps hourlyTokens when persisting incremental usage", async () => {
+    home = mkdtempSync(join(tmpdir(), "heatmap-hours-"));
+    const prevHome = process.env.HOME;
+    const prevDshHome = process.env.DSH_HOME;
+    process.env.HOME = home;
+    process.env.DSH_HOME = home;
+    try {
+      const store = new HeatmapStore({ sessions: { list: async () => [] } } as any);
+      await store.init();
+      const t0 = Date.UTC(2026, 7, 1, 0, 0, 0); // 08:00 Shanghai
+      store.ingest({
+        type: "assistant/message", seq: 1, time: t0, sid: "s1",
+        data: { message: { source: { provider: "p", model: "m" } }, usage: { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 50 }, turn: 1, step: 1 },
+      });
+      // a second turn in a different hour of the same day (12:00 Shanghai)
+      store.ingest({
+        type: "assistant/message", seq: 2, time: t0 + 4 * 3600_000, sid: "s1",
+        data: { message: { source: { provider: "p", model: "m" } }, usage: { inputTokens: 70, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 30 }, turn: 2, step: 1 },
+      });
+      const persisted = loadPersisted();
+      const day = persisted.get("2026-08-01");
+      expect(day).toBeTruthy();
+      // hours must survive the incremental persist (they were silently dropped)
+      expect(day!.hourlyTokens.reduce((a: number, b: number) => a + b, 0)).toBe(day!.totalTokens);
+      expect(day!.hourlyTokens[8]).toBe(150);
+      expect(day!.hourlyTokens[12]).toBe(100);
     } finally {
       if (prevHome === undefined) delete process.env.HOME;
       else process.env.HOME = prevHome;

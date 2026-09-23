@@ -275,6 +275,7 @@ function cloneDay(d: DayAgg): DayAgg {
     count: d.count,
     byModel: new Map(d.byModel),
     byProvider: new Map(d.byProvider),
+    hourlyTokens: [...(d.hourlyTokens ?? new Array(24).fill(0))],
     winnerModel: d.winnerModel,
     winnerProvider: d.winnerProvider,
   };
@@ -285,6 +286,10 @@ function mergeTwoDays(prev: DayAgg, live: DayAgg): DayAgg {
   for (const [k, v] of live.byModel) byModel.set(k, Math.max(byModel.get(k) ?? 0, v));
   const byProvider = new Map(prev.byProvider);
   for (const [k, v] of live.byProvider) byProvider.set(k, Math.max(byProvider.get(k) ?? 0, v));
+  // hourly also max-merged per hour — dropping it here used to zero every
+  // live-ingested day's hour bars on save.
+  const hourlyTokens = (prev.hourlyTokens ?? new Array(24).fill(0))
+    .map((v, i) => Math.max(v, live.hourlyTokens?.[i] ?? 0));
   const merged: DayAgg = {
     dayKey: prev.dayKey,
     totalTokens: Math.max(prev.totalTokens, live.totalTokens),
@@ -295,6 +300,7 @@ function mergeTwoDays(prev: DayAgg, live: DayAgg): DayAgg {
     count: Math.max(prev.count, live.count),
     byModel,
     byProvider,
+    hourlyTokens,
     winnerModel: null,
     winnerProvider: null,
   };
