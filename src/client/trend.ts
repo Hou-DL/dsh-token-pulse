@@ -29,6 +29,23 @@ function modelTotals(days: DayAgg[], dayKeys: string[]): Map<string, number> {
 
 const byTotalDesc = (a: [string, number], b: [string, number]) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1);
 
+/** Synthetic series key for "all other models combined". */
+export const OTHER_KEY = "__other__";
+
+/** Sum of every model NOT in `exclude`, per day, aligned to `dayKeys`. */
+export function buildOtherSeries(days: DayAgg[], dayKeys: string[], exclude: Set<string>): TrendSeries {
+  const index = new Map(dayKeys.map((k, i) => [k, i] as const));
+  const points = new Array<number>(dayKeys.length).fill(0);
+  for (const d of days) {
+    const i = index.get(d.dayKey);
+    if (i === undefined) continue;
+    for (const [m, v] of d.byModel) {
+      if (!exclude.has(m)) points[i] += v;
+    }
+  }
+  return { model: OTHER_KEY, points };
+}
+
 /** Sum each model's tokens over `dayKeys`, return up to `k` names by total desc. */
 export function pickTopModels(days: DayAgg[], dayKeys: string[], k = 5): string[] {
   return [...modelTotals(days, dayKeys).entries()]
@@ -149,6 +166,35 @@ export function seriesPath(points: Array<[number, number]>): string {
   return head + segs
     .map((s) => ` C ${fmtNum(s.c1[0])} ${fmtNum(s.c1[1])}, ${fmtNum(s.c2[0])} ${fmtNum(s.c2[1])}, ${fmtNum(s.p1[0])} ${fmtNum(s.p1[1])}`)
     .join("");
+}
+
+/**
+ * Same curve as seriesPath, but resampled at `samples` evenly spaced x
+ * positions into a FIXED-structure polyline (M + samples L). Every path then
+ * has an identical command count no matter how many days it represents, so
+ * CSS `transition: d` can morph lines across range switches too — where raw
+ * bezier paths (M + n-1 C) have mismatched structures and would jump.
+ * Visual output is indistinguishable at this density.
+ */
+export function seriesPathFixed(points: Array<[number, number]>, samples = 89): string {
+  if (points.length === 0) return "";
+  const x0 = points[0][0];
+  const x1 = points[points.length - 1][0];
+  const head = `M ${fmtNum(x0)} ${fmtNum(points[0][1])}`;
+  if (points.length === 1) return head;
+  const segs = monotoneSegments(points);
+  let out = "";
+  let seg = 0;
+  for (let s = 1; s <= samples; s++) {
+    const x = x0 + ((x1 - x0) * s) / samples;
+    while (seg < segs.length - 1 && x > segs[seg].p1[0]) seg++;
+    const g = segs[seg];
+    const t = g.p1[0] === g.p0[0] ? 0 : Math.min(1, Math.max(0, (x - g.p0[0]) / (g.p1[0] - g.p0[0])));
+    const mt = 1 - t;
+    const y = mt * mt * mt * g.p0[1] + 3 * mt * mt * t * g.c1[1] + 3 * mt * t * t * g.c2[1] + t * t * t * g.p1[1];
+    out += ` L ${fmtNum(x)} ${fmtNum(y)}`;
+  }
+  return head + out;
 }
 
 /** Compact token count for axis labels (same semantics as the heatmap). */

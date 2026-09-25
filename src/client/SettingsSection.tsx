@@ -80,6 +80,18 @@ export function SettingsSection({ t, ctx, days: injectedDays, totals: injectedTo
   const viewTopModelsNamed = viewTopModels.map((x) => ({ name: x.model, tokens: x.tokens }));
   const viewTopProvidersNamed = viewTopProviders.map((x) => ({ name: (x as any).provider ?? (x as any).name, tokens: x.tokens }));
 
+  // 「其它」汇总：同一统计口径下，Top 5 之外的所有模型/供应商用量之和
+  const othersScope = selectedKey && aggregated?.byDay.has(selectedKey)
+    ? [aggregated.byDay.get(selectedKey)!]
+    : (days ?? []);
+  const sumField = (field: "byModel" | "byProvider") => {
+    let total = 0;
+    for (const d of othersScope) for (const [, v] of d[field]) total += v;
+    return total;
+  };
+  const modelOthersTokens = sumField("byModel") - viewTopModels.reduce((a, x) => a + x.tokens, 0);
+  const providerOthersTokens = sumField("byProvider") - viewTopProviders.reduce((a, x) => a + x.tokens, 0);
+
   const injectedTop = injectedTop5;
   const hasData = totals && (totals.today > 0 || totals.thisWeek > 0 || totals.thisMonth > 0 || totals.all > 0);
 
@@ -308,9 +320,9 @@ export function SettingsSection({ t, ctx, days: injectedDays, totals: injectedTo
         </div>
       ) : null}
       {injectedTop ? (
-        <ModelTop5 t={t} topModels={injectedTop} topProviders={[]} days={days ?? undefined} mode={topMode} onModeChange={setTopMode} />
+        <ModelTop5 t={t} topModels={injectedTop} topProviders={[]} days={days ?? undefined} mode={topMode} onModeChange={setTopMode} othersModelTokens={modelOthersTokens} othersProviderTokens={providerOthersTokens} />
       ) : viewTopModelsNamed.length > 0 || viewTopProvidersNamed.length > 0 ? (
-        <ModelTop5 t={lang === "en" ? (k:string,p?:any)=> ({ "model.top5":"Top 5 Models","provider.top5":"Top 5 Providers","model.top5.hint":"By token usage","model.none":"No data","view.model":"Model","view.provider":"Provider"} as any)[k] ?? t(k,p) : t} topModels={viewTopModelsNamed} topProviders={viewTopProvidersNamed} days={days ?? undefined} mode={topMode} onModeChange={setTopMode} />
+        <ModelTop5 t={lang === "en" ? (k:string,p?:any)=> ({ "model.top5":"Top 5 Models","provider.top5":"Top 5 Providers","model.top5.hint":"By token usage","model.none":"No data","view.model":"Model","view.provider":"Provider","model.others":"Others"} as any)[k] ?? t(k,p) : t} topModels={viewTopModelsNamed} topProviders={viewTopProvidersNamed} days={days ?? undefined} mode={topMode} onModeChange={setTopMode} othersModelTokens={modelOthersTokens} othersProviderTokens={providerOthersTokens} />
       ) : null}
       {!hasData && !days ? (
         <div

@@ -17,6 +17,8 @@ export function ModelTop5({
   days,
   mode = "model",
   onModeChange,
+  othersModelTokens,
+  othersProviderTokens,
 }: {
   t: (k: string, p?: any) => string;
   topModels: TopItem[];
@@ -24,8 +26,13 @@ export function ModelTop5({
   days?: DayAgg[];
   mode?: "model" | "provider";
   onModeChange?: (m: "model" | "provider") => void;
+  /** sum of every model/provider beyond the top 5 (rendered as an extra tail row) */
+  othersModelTokens?: number;
+  othersProviderTokens?: number;
 }) {
   const active = mode === "provider" ? topProviders : topModels;
+  const othersTokens = mode === "provider" ? othersProviderTokens : othersModelTokens;
+  const hasOthers = (othersTokens ?? 0) > 0;
 
   if (active.length === 0) {
     return (
@@ -140,6 +147,41 @@ export function ModelTop5({
               </span>
             </div>
           ))}
+          {/* tail row: every model/provider beyond the top 5, aggregated */}
+          {hasOthers ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "10px 16px",
+                borderTop: "1px solid var(--dsw-alias-border-l2)",
+                opacity: 0.75,
+              }}
+            >
+              <span style={{ width: 20, textAlign: "center", fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>…</span>
+              <span
+                style={{
+                  flex: "0 1 40%",
+                  minWidth: 0,
+                  fontSize: 13,
+                  color: "var(--dsw-alias-label-secondary)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={t("model.others")}
+              >
+                {t("model.others")}
+              </span>
+              <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--dsw-alias-bg-layer-2, #ebedf0)", overflow: "hidden" }}>
+                <div style={{ width: `${Math.min(100, Math.max(4, ((othersTokens ?? 0) / max) * 100))}%`, height: "100%", background: "#9aa3ad", borderRadius: 3 }} />
+              </div>
+              <span style={{ fontSize: 12, color: "var(--dsw-alias-label-secondary)", whiteSpace: "nowrap" }}>
+                {formatTokens(othersTokens ?? 0)}
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
 

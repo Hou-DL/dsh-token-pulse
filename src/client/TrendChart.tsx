@@ -1,7 +1,7 @@
 import * as React from "react";
 import type { DayAgg } from "../aggregation.ts";
 import { toDayKey } from "../date-bucket.ts";
-import { recentDayKeys, pickTrendModels, buildSeries, seriesPath, formatTokensShort } from "./trend.ts";
+import { recentDayKeys, pickTrendModels, buildSeries, buildOtherSeries, OTHER_KEY, seriesPathFixed, formatTokensShort } from "./trend.ts";
 
 /** Distinct, colorblind-tolerant series colors (first matches the heatmap green). */
 const COLORS = [
@@ -16,18 +16,77 @@ function niceCeil(v: number): number {
   return Math.ceil(v / unit) * unit;
 }
 
+/** "z-ai/glm-5.3" -> "glm-5.3": display only the part after the last "/". */
+function shortName(model: string): string {
+  const i = model.lastIndexOf("/");
+  return i >= 0 ? model.slice(i + 1) : model;
+}
+
 const W = 720;
 const H = 280;
 const PAD = { top: 10, right: 28, bottom: 34, left: 76 }; // right: 给最右日期标签留出空间，避免贴边裁字
 /** chart container horizontal padding (must match the div below) */
 const CX_PAD = 8;
+const LS_TYPE_KEY = "dsh-token-pulse:trendChartType";
+/** transition/animation duration for the value/axis morphs (one tempo everywhere) */
+const DUR = ".55s";
+const T_POS = `x ${DUR} ease, y ${DUR} ease, width ${DUR} ease, height ${DUR} ease`;
+const T_D = `d ${DUR} ease`;
+const T_POINT = `cx ${DUR} ease, cy ${DUR} ease, r .2s ease`;
+const T_FADE = `opacity ${DUR} ease`;
+const T_SHIFT = `transform ${DUR} ease`;
+const GHOST_MS = 650;
 
 /**
- * Trend line chart at the bottom of the settings section: one smoothed line
- * per model (top 10 of the selected range), legend chips toggle visibility,
- * range switch between the last 7 / 30 / 90 days. Hovering a date column shows a
- * compact translucent tooltip BESIDE the cursor (never covering the hovered
- * point): date, day total, per-model totals with color dots.
+ * Stable color assignment per MODEL (not per rank): the same model keeps its
+ * color across range switches and legend toggles, so the animation never
+ * repaints a series. First-seen order locks the palette slot for good.
+ * Module-level so the assignment survives closing/reopening the panel.
+ */
+const modelColorSlot = new Map<string, number>();
+function colorFor(model: string): string {
+  let slot = modelColorSlot.get(model);
+  if (slot === undefined) {
+    slot = modelColorSlot.size % COLORS.length;
+    modelColorSlot.set(model, slot);
+  }
+  return COLORS[slot];
+}
+
+/**
+ * Animation styles. Elements that ENTER on a range/type switch (CSS transitions
+ * only animate elements that already existed) play a keyframe in the same 0.55s
+ * tempo as the gliding elements, and elements that LEAVE stay mounted for one
+ * beat as a "ghost" layer that collapses/fades — so the whole chart moves
+ * together instead of mixing instant pops with in-flight marks.
+ * The enter classes self-remove on animationend so live styles (hover opacity,
+ * legend toggles) keep working afterwards.
+ */
+const ANIM_CSS = `
+@keyframes dtp-grow { from { transform: scaleY(.02); opacity: .3; } }
+@keyframes dtp-fadein { from { opacity: 0; } }
+@keyframes dtp-shrink { to { transform: scaleY(.02); opacity: 0; } }
+@keyframes dtp-fadeout { to { opacity: 0; } }
+.dtp-growin { transform-box: fill-box; transform-origin: bottom; animation: dtp-grow ${DUR} ease; }
+.dtp-fadein { animation: dtp-fadein ${DUR} ease; }
+.dtp-ghost-bars { transform-box: fill-box; transform-origin: bottom; animation: dtp-shrink ${DUR} ease forwards; }
+.dtp-ghost-lines { animation: dtp-fadeout ${DUR} ease forwards; }
+`;
+
+/**
+ * Usage chart at the bottom of the settings section, two switchable forms:
+ * - "line": one smoothed (monotone cubic) line per model over the days
+ * - "bar":  one stacked bar per day, visible models layered bottom-up
+ * Both share the legend (top-10 + week's top-3, chips toggle models), the
+ * 7 / 30 / 90-day ranges and a compact translucent hover tooltip BESIDE the
+ * cursor (date, day total, per-model totals sorted desc, zero rows hidden).
+ *
+ * Range/type switches animate as ONE coordinated beat: retained marks glide
+ * by date identity (the last 7 days of a 30-day view sit in the rightmost
+ * slots, so 7→30 slides the week's bars right+down), entering marks grow from
+ * the baseline / fade in, and leaving marks collapse in a ghost overlay.
+ * Model colors are locked to model identity, never to rank position.
+ *
  * Pure SVG + absolutely-positioned HTML tooltip, no dependencies.
  */
 export function TrendChart({
@@ -40,22 +99,26 @@ export function TrendChart({
   isEn?: boolean;
 }) {
   const [rangeDays, setRangeDays] = React.useState<7 | 30 | 90>(7);
+  const [chartType, setChartType] = React.useState<"line" | "bar">(() => {
+    try { return localStorage.getItem(LS_TYPE_KEY) === "line" ? "line" : "bar"; } catch { return "bar"; }
+  });
   const [hidden, setHidden] = React.useState<ReadonlySet<string>>(new Set());
   /** hovered column index + pointer position in wrapper px (for side placement) */
   const [hover, setHover] = React.useState<{ idx: number; px: number; py: number } | null>(null);
+  /** one-beat overlay of the PREVIOUS layout's marks, collapsing out on switches */
+  const [ghost, setGhost] = React.useState<{ marks: React.ReactNode; labels: React.ReactNode; type: "line" | "bar" } | null>(null);
 
   const endKey = toDayKey(Date.now());
   const dayKeys = React.useMemo(() => recentDayKeys(endKey, rangeDays), [endKey, rangeDays]);
   const weekKeys = React.useMemo(() => recentDayKeys(endKey, 7), [endKey]);
-  // 范围前 10 + 近一周前 3 必进列表（本周冒头的模型在 30/90 天视图里也可见）
-  const topModels = React.useMemo(() => pickTrendModels(days, dayKeys, weekKeys, 10, 3), [days, dayKeys, weekKeys]);
-  const series = React.useMemo(() => buildSeries(days, dayKeys, topModels), [days, dayKeys, topModels]);
-
-  const totalsByModel = React.useMemo(() => {
-    const m = new Map<string, number>();
-    for (const s of series) m.set(s.model, s.points.reduce((a, b) => a + b, 0));
-    return m;
-  }, [series]);
+  // 范围前 9 + 近一周前 3 必进列表（本周冒头的模型在 30/90 天视图里也可见）；
+  // 第 10 位固定为「其它」——聚合剩余所有模型，柱子总量即全天真实用量
+  const topModels = React.useMemo(() => pickTrendModels(days, dayKeys, weekKeys, 9, 3), [days, dayKeys, weekKeys]);
+  const series = React.useMemo(() => {
+    const base = buildSeries(days, dayKeys, topModels);
+    const other = buildOtherSeries(days, dayKeys, new Set(topModels));
+    return other.points.some((v) => v > 0) ? [...base, other] : base;
+  }, [days, dayKeys, topModels]);
 
   // wrapper size for pixel-accurate tooltip positioning under the scaled SVG
   const wrapRef = React.useRef<HTMLDivElement | null>(null);
@@ -70,6 +133,15 @@ export function TrendChart({
     return () => ro.disconnect();
   }, []);
 
+  // previous-render identity sets (for enter animations) + last-render mark
+  // nodes (reused as the ghost overlay on switches)
+  const prevDaysRef = React.useRef<string[] | null>(null);
+  const prevModelsRef = React.useRef<string[] | null>(null);
+  const prevTickRef = React.useRef<string[] | null>(null);
+  const prevTypeRef = React.useRef<"line" | "bar" | null>(null);
+  const marksRef = React.useRef<React.ReactNode>(null);
+  const labelsRef = React.useRef<React.ReactNode>(null);
+
   const toggle = (model: string) => {
     setHidden((prev) => {
       const next = new Set(prev);
@@ -79,14 +151,27 @@ export function TrendChart({
     });
   };
 
-  const colorOf = (model: string) => COLORS[Math.max(0, topModels.indexOf(model)) % COLORS.length];
-  const visible = series.filter((s) => !hidden.has(s.model));
+  const colorOf = (model: string) => (model === OTHER_KEY ? "#8b949e" : colorFor(model));
+  /** 其它 series 用固定中性灰；显示名：其它系列显示「其它/Other」，模型只显示 "/" 后半段 */
+  const dispName = (model: string) => (model === OTHER_KEY ? t("model.others") : shortName(model));
+  const isHidden = (model: string) => hidden.has(model);
+  const visible = series.filter((s) => !isHidden(s.model));
 
   const plotW = W - PAD.left - PAD.right;
   const plotH = H - PAD.top - PAD.bottom;
-  const yMax = niceCeil(Math.max(1, ...visible.map((s) => Math.max(0, ...s.points))));
+  // line mode: points spread edge-to-edge; bar mode: one slot per day
   const step = dayKeys.length > 1 ? plotW / (dayKeys.length - 1) : plotW;
   const xOf = (i: number) => PAD.left + (dayKeys.length > 1 ? i * step : plotW / 2);
+  const slot = plotW / dayKeys.length;
+  const barW = Math.max(2, slot * 0.6);
+  const cxOf = (i: number) => PAD.left + slot * (i + 0.5);
+  const anchorX = (i: number) => (chartType === "bar" ? cxOf(i) : xOf(i));
+  // bars stack every visible model per day, so their axis max is the largest
+  // daily stack total; lines scale by the largest single point
+  const dayTotals = dayKeys.map((_, i) => visible.reduce((a, s) => a + s.points[i], 0));
+  const yMax = chartType === "bar"
+    ? niceCeil(Math.max(1, ...dayTotals))
+    : niceCeil(Math.max(1, ...visible.map((s) => Math.max(0, ...s.points))));
   const yOf = (v: number) => PAD.top + (1 - v / yMax) * plotH;
 
   const fmtDay = (k: string) => `${Number(k.slice(5, 7))}/${Number(k.slice(8, 10))}`;
@@ -98,6 +183,46 @@ export function TrendChart({
   const tickEvery = rangeDays === 7 ? 1 : rangeDays === 30 ? 5 : 10;
   const tickIdx = dayKeys.map((_, i) => i).filter((i) => i % tickEvery === 0 || i === dayKeys.length - 1);
 
+  // enter-anim eligibility: element identities that did not exist last render
+  const typeChanged = prevTypeRef.current !== null && prevTypeRef.current !== chartType;
+  const isNewDay = (k: string) =>
+    prevDaysRef.current !== null && (typeChanged || !prevDaysRef.current.includes(k));
+  const isNewModel = (m: string) =>
+    prevModelsRef.current !== null && (typeChanged || !prevModelsRef.current.includes(m));
+  const isNewTick = (k: string) =>
+    prevTickRef.current !== null && (typeChanged || !prevTickRef.current.includes(k));
+  const enterCls = (isNew: boolean, grow: boolean) => (isNew ? (grow ? "dtp-growin" : "dtp-fadein") : undefined);
+  const onAnimEnd = (e: React.AnimationEvent<SVGElement>) => {
+    e.currentTarget.classList.remove("dtp-growin", "dtp-fadein");
+  };
+
+  React.useEffect(() => {
+    marksRef.current = marksNode;
+    labelsRef.current = labelsNode;
+    prevDaysRef.current = dayKeys;
+    // 按实际系列列表记身份（含「其它」），否则「其它」每次切换都被误判为新模型而重复长出
+    prevModelsRef.current = series.map((s) => s.model);
+    prevTickRef.current = tickIdx.map((i) => dayKeys[i]);
+    prevTypeRef.current = chartType;
+  });
+
+  React.useEffect(() => {
+    if (!ghost) return;
+    const timer = setTimeout(() => setGhost(null), GHOST_MS);
+    return () => clearTimeout(timer);
+  }, [ghost]);
+
+  const switchTo = (patch: { range?: 7 | 30 | 90; type?: "line" | "bar" }) => {
+    // capture the CURRENT layout's mark nodes as the exiting ghost overlay
+    setGhost({ marks: marksRef.current, labels: labelsRef.current, type: chartType });
+    if (patch.range !== undefined) setRangeDays(patch.range);
+    if (patch.type !== undefined) {
+      setChartType(patch.type);
+      try { localStorage.setItem(LS_TYPE_KEY, patch.type); } catch {}
+    }
+    setHover(null);
+  };
+
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const wrapEl = wrapRef.current;
     if (!wrapEl) return;
@@ -105,7 +230,9 @@ export function TrendChart({
     const svgRect = e.currentTarget.getBoundingClientRect();
     const scale = svgRect.width / W || 1;
     const xvb = (e.clientX - svgRect.left) / scale;
-    const i = Math.round((xvb - PAD.left) / step);
+    const i = chartType === "bar"
+      ? Math.floor((xvb - PAD.left) / slot)
+      : Math.round((xvb - PAD.left) / step);
     setHover({
       idx: Math.max(0, Math.min(dayKeys.length - 1, i)),
       px: e.clientX - wrapRect.left,
@@ -126,12 +253,12 @@ export function TrendChart({
   const hoverTotal = hoverRows.reduce((a, r) => a + r.value, 0);
 
   // tooltip placement: to the SIDE of the hovered column (flips near edges),
-  // vertically centered on the pointer, so the hovered point is never covered
+  // vertically centered on the pointer, so the hovered mark is never covered
   const tipW = 200;
   const tipH = 56 + hoverRows.length * 19;
   const gap = 14;
   const svgW = Math.max(0, wrap.w - CX_PAD * 2);
-  const colPx = hover == null ? 0 : CX_PAD + (xOf(hover.idx) / W) * svgW;
+  const colPx = hover == null ? 0 : CX_PAD + (anchorX(hover.idx) / W) * svgW;
   let tipLeft = hover == null ? 0 : colPx + gap;
   if (hover != null && tipLeft + tipW > wrap.w - 4) tipLeft = colPx - gap - tipW;
   tipLeft = Math.max(4, tipLeft);
@@ -146,6 +273,93 @@ export function TrendChart({
     background: "var(--dsw-alias-bg-layer-3)",
     color: "var(--dsw-alias-label-secondary)",
   };
+  const segBtn = (active: boolean): React.CSSProperties => ({
+    ...segStyle,
+    background: active ? "var(--dsw-alias-label-primary)" : "transparent",
+    color: active ? "var(--dsw-alias-bg-layer-3)" : "var(--dsw-alias-label-secondary)",
+    transition: "background .25s ease, color .25s ease",
+  });
+
+  // ---- mark nodes (also captured as the ghost overlay on switches) ----
+  const labelsNode = (
+    <>
+      {tickIdx.map((i) => (
+        <text
+          key={dayKeys[i]}
+          x={0}
+          y={0}
+          textAnchor="middle"
+          fontSize={14}
+          fill="var(--dsw-alias-label-tertiary)"
+          className={enterCls(isNewTick(dayKeys[i]), false)}
+          onAnimationEnd={onAnimEnd}
+          style={{ transform: `translate(${anchorX(i)}px, ${H - 10}px)`, transition: T_SHIFT }}
+        >
+          {fmtDay(dayKeys[i])}
+        </text>
+      ))}
+    </>
+  );
+
+  const marksNode = chartType === "bar" ? (
+    <>
+      {dayKeys.map((k, i) => {
+        const dayNew = isNewDay(k);
+        let cum = 0;
+        const segs = series.map((s) => {
+          const v = isHidden(s.model) ? 0 : s.points[i];
+          const yTop = yOf(cum + v);
+          const h = v > 0 ? Math.max(0.5, yOf(cum) - yTop) : 0;
+          cum += v;
+          return (
+            <rect
+              key={s.model}
+              x={cxOf(i) - barW / 2}
+              y={yTop}
+              width={barW}
+              height={h}
+              fill={colorOf(s.model)}
+              className={enterCls(!dayNew && isNewModel(s.model), true)}
+              onAnimationEnd={onAnimEnd}
+              style={{ transition: T_POS }}
+            />
+          );
+        });
+        return (
+          <g key={k} opacity={hover?.idx === i ? 1 : 0.8} className={enterCls(dayNew, true)} onAnimationEnd={onAnimEnd} style={{ transition: T_FADE }}>
+            {segs}
+          </g>
+        );
+      })}
+    </>
+  ) : (
+    <>
+      {series.map((s) => {
+        const color = colorOf(s.model);
+        const off = isHidden(s.model);
+        const modelNew = isNewModel(s.model);
+        const pts: Array<[number, number]> = s.points.map((v, i) => [xOf(i), yOf(v)]);
+        return (
+          <g key={s.model} opacity={off ? 0 : 0.8} className={enterCls(modelNew, false)} onAnimationEnd={onAnimEnd} style={{ transition: T_FADE }}>
+            <path d={seriesPathFixed(pts)} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ transition: T_D }} />
+            {/* 用量为 0 的日期不显示点；点按日期键控，跨范围切换时沿 x 轴滑动 */}
+            {pts.map(([x, y], i) => (s.points[i] > 0 ? (
+              <circle
+                key={dayKeys[i]}
+                cx={x}
+                cy={y}
+                r={hover?.idx === i ? 4 : 2}
+                fill={color}
+                className={enterCls(!modelNew && isNewDay(dayKeys[i]), false)}
+                onAnimationEnd={onAnimEnd}
+                style={{ transition: T_POINT }}
+              />
+            ) : null))}
+          </g>
+        );
+      })}
+    </>
+  );
 
   return (
     <div
@@ -156,7 +370,8 @@ export function TrendChart({
         overflow: "hidden",
       }}
     >
-      {/* header: title + range switch */}
+      <style>{ANIM_CSS}</style>
+      {/* header: title + chart-type switch (line/bar) + range switch */}
       <div
         style={{
           padding: "12px 16px 8px",
@@ -171,59 +386,65 @@ export function TrendChart({
           <span style={{ fontSize: 13, fontWeight: 600, color: "var(--dsw-alias-label-primary)" }}>{t("trend.title")}</span>
           <span style={{ fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>{t("trend.hint")}</span>
         </div>
-        <div style={{ display: "inline-flex", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: 6, overflow: "hidden" }}>
-          {([7, 30, 90] as const).map((n) => (
-            <button
-              key={n}
-              onClick={() => { setRangeDays(n); setHover(null); }}
-              style={{
-                ...segStyle,
-                background: rangeDays === n ? "var(--dsw-alias-label-primary)" : "transparent",
-                color: rangeDays === n ? "var(--dsw-alias-bg-layer-3)" : "var(--dsw-alias-label-secondary)",
-              }}
-            >
-              {n === 7 ? t("trend.range7") : n === 30 ? t("trend.range30") : t("trend.range90")}
-            </button>
-          ))}
+        <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "inline-flex", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: 6, overflow: "hidden" }}>
+            {(["line", "bar"] as const).map((ty) => (
+              <button key={ty} onClick={() => switchTo({ type: ty })} style={segBtn(chartType === ty)}>
+                {ty === "line" ? t("trend.type.line") : t("trend.type.bar")}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "inline-flex", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: 6, overflow: "hidden" }}>
+            {([7, 30, 90] as const).map((n) => (
+              <button
+                key={n}
+                onClick={() => switchTo({ range: n })}
+                style={segBtn(rangeDays === n)}
+              >
+                {n === 7 ? t("trend.range7") : n === 30 ? t("trend.range30") : t("trend.range90")}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* legend chips: top-10 models of the range, 5 per row, click to toggle a line */}
+      {/* legend chips: top-10 models of the range, 5 per row, click to toggle.
+          Shows the short name (after "/") only — usage reads off the chart. */}
       <div style={{ padding: "10px 16px 4px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 6 }}>
           {series.map((s) => {
-            const off = hidden.has(s.model);
+            const off = isHidden(s.model);
             return (
               <button
                 key={s.model}
                 onClick={() => toggle(s.model)}
-                title={s.model}
+                title={s.model === OTHER_KEY ? dispName(s.model) : s.model}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: 4,
-                  padding: "1px 6px",
+                  gap: 6,
+                  padding: "2px 8px",
                   borderRadius: 999,
                   border: "1px solid var(--dsw-alias-border-l2)",
                   background: "transparent",
                   cursor: "pointer",
                   opacity: off ? 0.35 : 1,
-                  fontSize: 11,
+                  transition: T_FADE,
+                  fontSize: 12,
                   color: "var(--dsw-alias-label-primary)",
                   minWidth: 0,
                 }}
               >
-                <span style={{ width: 6, height: 6, borderRadius: 3, background: colorOf(s.model), flexShrink: 0 }} />
+                <span style={{ width: 8, height: 8, borderRadius: 4, background: colorOf(s.model), flexShrink: 0 }} />
                 <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left", textDecoration: off ? "line-through" : "none" }}>
-                  {s.model}
+                  {dispName(s.model)}
                 </span>
-                <span style={{ fontSize: 10, color: "var(--dsw-alias-label-tertiary)", flexShrink: 0 }}>{formatTokensShort(totalsByModel.get(s.model) ?? 0)}</span>
               </button>
             );
           })}
         </div>
         {series.length === 0 ? null : (
-          <div style={{ fontSize: 10, color: "var(--dsw-alias-label-tertiary)", marginTop: 4 }}>{t("trend.legend.hint")}</div>
+          <div style={{ fontSize: 11, color: "var(--dsw-alias-label-tertiary)", marginTop: 4 }}>{t("trend.legend.hint")}</div>
         )}
       </div>
 
@@ -241,43 +462,58 @@ export function TrendChart({
             onMouseMove={onMove}
             onMouseLeave={() => setHover(null)}
           >
-            {/* y grid + labels */}
+            {/* y grid + labels (path/transform so axis rescaling morphs smoothly) */}
             {[0, 0.25, 0.5, 0.75, 1].map((f) => {
               const y = PAD.top + (1 - f) * plotH;
               return (
                 <g key={f}>
-                  <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y} stroke="var(--dsw-alias-border-l2)" strokeWidth={1} strokeDasharray={f === 0 ? undefined : "3 3"} />
-                  <text x={PAD.left - 8} y={y + 5} textAnchor="end" fontSize={14} fill="var(--dsw-alias-label-tertiary)">
+                  <path
+                    d={`M ${PAD.left} ${y} L ${W - PAD.right} ${y}`}
+                    fill="none"
+                    stroke="var(--dsw-alias-border-l2)"
+                    strokeWidth={1}
+                    strokeDasharray={f === 0 ? undefined : "3 3"}
+                    style={{ transition: T_D }}
+                  />
+                  <text
+                    x={0}
+                    y={0}
+                    textAnchor="end"
+                    fontSize={14}
+                    fill="var(--dsw-alias-label-tertiary)"
+                    style={{ transform: `translate(${PAD.left - 8}px, ${y + 5}px)`, transition: T_SHIFT }}
+                  >
                     {formatTokensShort(yMax * f)}
                   </text>
                 </g>
               );
             })}
-            {/* x labels */}
-            {tickIdx.map((i) => (
-              <text key={i} x={xOf(i)} y={H - 10} textAnchor="middle" fontSize={14} fill="var(--dsw-alias-label-tertiary)">
-                {fmtDay(dayKeys[i])}
-              </text>
-            ))}
+
+            {/* ghost overlay: the previous layout's marks, collapsing out */}
+            {ghost ? (
+              <>
+                <g className={ghost.type === "bar" ? "dtp-ghost-bars" : "dtp-ghost-lines"}>{ghost.marks}</g>
+                <g className="dtp-ghost-lines">{ghost.labels}</g>
+              </>
+            ) : null}
+
+            {labelsNode}
+            {marksNode}
+
             {/* hovered column guide */}
             {hover != null ? (
-              <line x1={xOf(hover.idx)} y1={PAD.top} x2={xOf(hover.idx)} y2={PAD.top + plotH} stroke="var(--dsw-alias-label-tertiary)" strokeWidth={1} strokeDasharray="4 3" opacity={0.6} />
+              <path
+                d={`M ${anchorX(hover.idx)} ${PAD.top} L ${anchorX(hover.idx)} ${PAD.top + plotH}`}
+                fill="none"
+                stroke="var(--dsw-alias-label-tertiary)"
+                strokeWidth={1}
+                strokeDasharray="4 3"
+                opacity={0.6}
+                style={{ transition: T_D }}
+              />
             ) : null}
-            {/* smoothed lines + points */}
-            {visible.map((s) => {
-              const color = colorOf(s.model);
-              const pts: Array<[number, number]> = s.points.map((v, i) => [xOf(i), yOf(v)]);
-              return (
-                <g key={s.model} opacity={0.8}>
-                  <path d={seriesPath(pts)} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-                  {/* 用量为 0 的日期不显示点 */}
-                  {pts.map(([x, y], i) => (s.points[i] > 0 ? (
-                    <circle key={i} cx={x} cy={y} r={hover?.idx === i ? 4 : 2} fill={color} />
-                  ) : null))}
-                </g>
-              );
-            })}
-            {/* all lines hidden hint */}
+
+            {/* all models hidden hint */}
             {visible.length === 0 ? (
               <text x={W / 2} y={PAD.top + plotH / 2} textAnchor="middle" fontSize={13} fill="var(--dsw-alias-label-tertiary)">
                 {t("trend.legend.hint")}
@@ -318,7 +554,7 @@ export function TrendChart({
                 <div key={r.model} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ width: 7, height: 7, borderRadius: 4, background: r.color, flexShrink: 0 }} />
                   <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.model}>
-                    {r.model}
+                    {dispName(r.model)}
                   </span>
                   <span style={{ fontWeight: 500, whiteSpace: "nowrap" }}>{formatTokensShort(r.value)} tokens</span>
                 </div>

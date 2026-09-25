@@ -5,8 +5,11 @@ import {
   pickTopModels,
   pickTrendModels,
   buildSeries,
+  buildOtherSeries,
+  OTHER_KEY,
   monotoneSegments,
   seriesPath,
+  seriesPathFixed,
   formatTokensShort,
 } from "./trend.ts";
 
@@ -101,6 +104,18 @@ describe("pickTrendModels", () => {
   });
 });
 
+describe("buildOtherSeries", () => {
+  it("sums every model outside the excluded set, per day, zero-filled", () => {
+    const days = [
+      mkDay("2026-08-26", { A: 50, B: 100, C: 7, D: 3 }),
+      mkDay("2026-08-27", { A: 60 }),
+    ];
+    const s = buildOtherSeries(days, ["2026-08-26", "2026-08-27"], new Set(["A", "B"]));
+    expect(s.model).toBe(OTHER_KEY);
+    expect(s.points).toEqual([10, 0]); // C+D on the 26th, nothing else on the 27th
+  });
+});
+
 describe("buildSeries", () => {
   const days = [
     mkDay("2026-08-26", { A: 50, B: 100 }),
@@ -168,6 +183,31 @@ describe("seriesPath", () => {
     expect(d.startsWith("M")).toBe(true);
     expect(d).toContain("C");
     expect(d).not.toContain("NaN");
+  });
+});
+
+describe("seriesPathFixed", () => {
+  it("emits an identical command structure regardless of point count", () => {
+    const a = seriesPathFixed([[0, 0], [10, 5], [20, 3]], 12);
+    const b = seriesPathFixed([[0, 0], [5, 2], [10, 4], [15, 1], [20, 6]], 12);
+    expect(a.match(/ L /g)?.length).toBe(12);
+    expect(b.match(/ L /g)?.length).toBe(12);
+  });
+
+  it("passes exactly through the data points when samples align", () => {
+    const d = seriesPathFixed([[0, 0], [10, 10], [20, 0]], 2);
+    expect(d).toContain("L 10 10");
+    expect(d).toContain("L 20 0");
+  });
+
+  it("resampled curve does not overshoot the data range", () => {
+    const d = seriesPathFixed([[0, 0], [1, 10], [2, 0]], 30);
+    const ys = [...d.matchAll(/L [-\d.]+ ([-\d.]+)/g)].map((m) => Number(m[1]));
+    expect(ys.length).toBeGreaterThan(0);
+    for (const y of ys) {
+      expect(y).toBeGreaterThanOrEqual(-1e-9);
+      expect(y).toBeLessThanOrEqual(10 + 1e-9);
+    }
   });
 });
 
