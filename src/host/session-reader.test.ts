@@ -124,6 +124,37 @@ describe("readAllUsageEvents", () => {
     }
   });
 
+  it("reads only the highest session generation per directory (no double count)", async () => {
+    home = mkdtempSync(join(tmpdir(), "heatmap-gen-"));
+    const root = join(home, "sessions");
+    const t0 = Date.UTC(2026, 7, 3, 8, 0, 0);
+    const ev = (input: number) => [
+      makeEvent("assistant/message", 1, t0, {
+        message: { source: { provider: "pG", model: "mG" } },
+        usage: { inputTokens: input, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 },
+        turn: 1, step: 1,
+      }),
+    ];
+    // one session directory carrying BOTH generations (as after a DSH upgrade):
+    // v3 holds the legacy log, v4 the current one — only v4 may be counted
+    writeSession(root, "--ws--", "mixed-gen", ev(500), "session.v3.jsonl.zstd");
+    writeSession(root, "--ws--", "mixed-gen", ev(700), "session.v4.jsonl.zstd");
+    const prevHome = process.env.HOME;
+    const prevDshHome = process.env.DSH_HOME;
+    process.env.HOME = home;
+    process.env.DSH_HOME = home;
+    try {
+      const out = await readAllUsageEvents({ sessions: { list: async () => [] } } as any);
+      expect(out.length).toBe(1);
+      expect(out[0].usage.inputTokens).toBe(700);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevDshHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevDshHome;
+    }
+  });
+
   it("honors $DSH_HOME for the sessions scan (multi-install safe)", async () => {
     home = mkdtempSync(join(tmpdir(), "heatmap-dshhome-"));
     const sessionsRoot = join(home, "sessions");

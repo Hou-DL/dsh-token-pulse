@@ -209,18 +209,28 @@ export async function readAllUsageEvents(ctx: any): Promise<RawUsageEvent[]> {
     const { join, basename, dirname } = await import("node:path");
     const dir = sessionsDir();
     if (existsSync(dir)) {
-      const files: string[] = [];
+      // DSH 0.1.7+ writes generation-numbered logs (session.v4.jsonl.zstd, ...)
+      // and — like core — a session directory may temporarily hold several
+      // generations after an upgrade. Only the numerically HIGHEST generation
+      // per directory is canonical; reading lower ones would double-count.
+      const best = new Map<string, { gen: number; path: string }>();
       (function walk(dir: string) {
         try {
           for (const entry of readdirSync(dir, { withFileTypes: true })) {
             const p = join(dir, entry.name);
             if (entry.isDirectory()) walk(p);
-            // session.jsonl[.zstd] (legacy) and session.v3.jsonl[.zstd] (current DSH
-            // session format; vN prefix may keep evolving — accept any version).
-            else if (/^session(\.v\d+)?\.jsonl(\.zstd)?$/.test(entry.name)) files.push(p);
+            // session.jsonl[.zstd] (v0) and session.vN.jsonl[.zstd] (generation N)
+            else {
+              const m = /^session(\.v(\d+))?\.jsonl(\.zstd)?$/.exec(entry.name);
+              if (!m) continue;
+              const gen = m[2] ? Number(m[2]) : 0;
+              const cur = best.get(dir);
+              if (!cur || gen > cur.gen) best.set(dir, { gen, path: p });
+            }
           }
         } catch {}
       })(dir);
+      const files = [...best.values()].sort((a, b) => (a.path < b.path ? -1 : 1)).map((e) => e.path);
 
       for (const f of files) {
         // <root>/<workspace>/<sessionId>/session.jsonl.zstd
