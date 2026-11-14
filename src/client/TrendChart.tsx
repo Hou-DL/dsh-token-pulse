@@ -280,6 +280,20 @@ export function TrendChart({
     transition: "background .25s ease, color .25s ease",
   });
 
+  // line paths are heavy (fixed 712-segment polylines) — rebuild only when
+  // data/scale changes, never on hover ticks
+  const linePaths = React.useMemo(() => {
+    const m = new Map<string, string>();
+    if (chartType === "line") {
+      for (const s of series) {
+        const pts: Array<[number, number]> = s.points.map((v, i) => [xOf(i), yOf(v)]);
+        m.set(s.model, seriesPathFixed(pts));
+      }
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [series, yMax, chartType, dayKeys, hidden]);
+
   // ---- mark nodes (also captured as the ghost overlay on switches) ----
   const labelsNode = (
     <>
@@ -341,7 +355,7 @@ export function TrendChart({
         const pts: Array<[number, number]> = s.points.map((v, i) => [xOf(i), yOf(v)]);
         return (
           <g key={s.model} opacity={off ? 0 : 0.8} className={enterCls(modelNew, false)} onAnimationEnd={onAnimEnd} style={{ transition: T_FADE }}>
-            <path d={seriesPathFixed(pts)} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ transition: T_D }} />
+            <path d={linePaths.get(s.model) ?? ""} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ transition: T_D }} />
             {/* 用量为 0 的日期不显示点；点按日期键控，跨范围切换时沿 x 轴滑动 */}
             {pts.map(([x, y], i) => (s.points[i] > 0 ? (
               <circle

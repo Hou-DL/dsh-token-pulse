@@ -300,16 +300,34 @@ export function SettingsSection({ t, ctx, days: injectedDays, totals: injectedTo
         ) : null}
       </div>
 
-      {view === "week" || view === "month" ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
-          <button onClick={() => setAnchor((a: string) => { const d = new Date(a + "T12:00:00+08:00"); if (view === "week") d.setDate(d.getDate() - 7); else d.setMonth(d.getMonth() - 1); const ms = d.getTime(); return new Date(ms).toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" } as any); })} style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--dsw-alias-border-l2)", background: "var(--dsw-alias-bg-layer-3)", cursor: "pointer" }}>{lang === "en" ? "‹ Prev" : "‹ 上一"}{view === "week" ? (lang==="en"?" Week":"周") : (lang==="en"?" Month":"月")}</button>
-          <span style={{ fontSize: 12, color: "var(--dsw-alias-label-secondary)", fontWeight: 500 }}>
-            {view === "week" ? (()=>{ const a = anchor; const d = new Date(a+"T12:00:00+08:00"); const dow=(d.getDay()+6)%7; const mon=new Date(d); mon.setDate(d.getDate()-dow); const sun=new Date(mon); sun.setDate(mon.getDate()+6); const fmt=(x:Date)=> `${x.getMonth()+1}/${x.getDate()}`; return lang==="en" ? `Week of ${fmt(mon)} - ${fmt(sun)}` : `${mon.getMonth()+1}月${mon.getDate()}日 - ${sun.getMonth()+1}月${sun.getDate()}日`; })() : `${Number(anchor.slice(0,4))}年${Number(anchor.slice(5,7))}月`}
-            {lang === "en" && view==="month" ? ` ${anchor.slice(0,7)}` : ""}
-          </span>
-          <button onClick={() => setAnchor((a: string) => { const d = new Date(a + "T12:00:00+08:00"); if (view === "week") d.setDate(d.getDate() + 7); else d.setMonth(d.getMonth() + 1); const ms = d.getTime(); return new Date(ms).toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" } as any); })} style={{ padding: "4px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--dsw-alias-border-l2)", background: "var(--dsw-alias-bg-layer-3)", cursor: "pointer" }}>{lang === "en" ? "Next ›" : "下一"}{view === "week" ? (lang==="en"?" Week":"周") : (lang==="en"?" Month":"月")} ›</button>
-        </div>
-      ) : null}
+      {(() => {
+        const dOf = (a: string) => new Date(a + "T12:00:00+08:00");
+        const btn: React.CSSProperties = { padding: "4px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--dsw-alias-border-l2)", background: "var(--dsw-alias-bg-layer-3)", cursor: "pointer" };
+        const shiftDays = (n: number) => setAnchor((a: string) => { const d = dOf(a); d.setDate(d.getDate() + n); return new Date(d.getTime()).toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" } as any); });
+        const shiftMonth = (n: number) => setAnchor((a: string) => { const d = dOf(a); d.setMonth(d.getMonth() + n); return new Date(d.getTime()).toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" } as any); });
+        const aD = dOf(anchor);
+        const fmtCn = (x: Date) => `${x.getMonth() + 1}月${x.getDate()}日`;
+        const prevLabel = view === "week" ? "‹ 上一周" : view === "month" ? "‹ 上一月" : view === "quarter" ? "‹ 上一季度" : "‹ 上一年";
+        const nextLabel = view === "week" ? "下一周 ›" : view === "month" ? "下一月 ›" : view === "quarter" ? "下一季度 ›" : "下一年 ›";
+        const prevLabelEn = view === "week" ? "‹ Prev Week" : view === "month" ? "‹ Prev Month" : view === "quarter" ? "‹ Prev Quarter" : "‹ Prev Year";
+        const nextLabelEn = view === "week" ? "Next Week ›" : view === "month" ? "Next Month ›" : view === "quarter" ? "Next Quarter ›" : "Next Year ›";
+        const label = view === "week"
+          ? (() => { const d = aD; const dow = (d.getDay() + 6) % 7; const mon = new Date(d); mon.setDate(d.getDate() - dow); const sun = new Date(mon); sun.setDate(mon.getDate() + 6); const fmt = (x: Date) => `${x.getMonth() + 1}/${x.getDate()}`; return lang === "en" ? `Week of ${fmt(mon)} - ${fmt(sun)}` : `${mon.getMonth() + 1}月${mon.getDate()}日 - ${sun.getMonth() + 1}月${sun.getDate()}日`; })()
+          : view === "month"
+          ? `${Number(anchor.slice(0, 4))}年${Number(anchor.slice(5, 7))}月` + (lang === "en" ? ` ${anchor.slice(0, 7)}` : "")
+          : view === "quarter"
+          ? lang === "en" ? `${new Date(aD.getTime() - 89 * 86400000).toLocaleDateString("en-CA")} - ${aD.toLocaleDateString("en-CA")}` : `${fmtCn(new Date(aD.getTime() - 89 * 86400000))} - ${fmtCn(aD)}`
+          : lang === "en" ? `${aD.getFullYear()}` : `${aD.getFullYear()}年`;
+        const onPrev = view === "month" ? () => shiftMonth(-1) : () => shiftDays(view === "week" ? -7 : view === "quarter" ? -90 : -365);
+        const onNext = view === "month" ? () => shiftMonth(1) : () => shiftDays(view === "week" ? 7 : view === "quarter" ? 90 : 365);
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
+            <button onClick={onPrev} style={btn}>{lang === "en" ? prevLabelEn : prevLabel}</button>
+            <span style={{ fontSize: 12, color: "var(--dsw-alias-label-secondary)", fontWeight: 500 }}>{label}</span>
+            <button onClick={onNext} style={btn}>{lang === "en" ? nextLabelEn : nextLabel}</button>
+          </div>
+        );
+      })()}
 
       {totals ? <StatsCards t={lang === "en" ? (k:string,p?:any)=> { const enMap:Record<string,string>={"stats.today":"Today","stats.week":"This week","stats.month":"This month","stats.all":"All time"}; if(k==="stats.count") return `${p?.count ?? ""} turns`; return (enMap as any)[k] ?? t(k,p); } : t} totals={totals} todayCount={undefined} /> : null}
       {days ? <HeatmapGrid t={lang === "en" ? (k:string,p?:any)=> { const enM:Record<string,string>={"view.week":"Week","view.month":"Month","view.quarter":"Quarter","view.year":"Year","heatmap.legend.less":"Less","heatmap.legend.more":"More","heatmap.empty":"No data yet","heatmap.tooltip.none":"No usage","heatmap.subtitle":"Token usage from local session logs, bucketed by Asia/Shanghai. First sync is persisted — deleting sessions keeps history.","heatmap.title":"Token Pulse"}; return (enM as any)[k] ?? t(k,p); } : t} days={days} view={view} onViewChange={handleViewChange} selectedKey={selectedKey} onSelect={handleSelect} isEn={lang === "en"} thresholds={thresholds} /> : null}

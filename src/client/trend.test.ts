@@ -209,6 +209,17 @@ describe("seriesPathFixed", () => {
       expect(y).toBeLessThanOrEqual(10 + 1e-9);
     }
   });
+
+  it("default density passes exactly through data points of a 90-day series", () => {
+    // 90 evenly spaced points with a spike: the peak vertex must appear verbatim
+    // in the path so the dot sits ON the line (regression: sparse sampling cut
+    // the spike's corner and left dots floating above the curve).
+    const pts: Array<[number, number]> = [];
+    for (let i = 0; i < 90; i++) pts.push([i, i === 45 ? 100 : 0]);
+    const d = seriesPathFixed(pts);
+    expect(d).toContain("L 45 100");
+    expect(d.match(/ L /g)?.length).toBe(712);
+  });
 });
 
 describe("formatTokensShort", () => {

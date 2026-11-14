@@ -81,33 +81,7 @@ function tooltipTotal(day: DayAgg): string {
   return `${day.dayKey}: ${formatTokensShort(day.totalTokens)} tokens`;
 }
 
-function HeatCell({ day, level, size = 14 }: { day: DayAgg; level: number; size?: number }) {
-  const colors: Record<number, string> = {
-    0: "var(--dsw-alias-bg-layer-2, #ebedf0)",
-    1: "#c6e48b",
-    2: "#7bc96f",
-    3: "#239a3b",
-    4: "#196127",
-  };
-  return (
-    <div
-      title={tooltipTotal(day)}
-      aria-label={tooltipTotal(day)}
-      style={{
-        width: size,
-        height: size,
-        borderRadius: 3,
-        background: colors[level],
-        border: level === 0 ? "1px solid var(--dsw-alias-border-l2, #e5e7eb)" : "1px solid transparent",
-        boxSizing: "border-box",
-        cursor: "pointer",
-        flexShrink: 0,
-      }}
-    />
-  );
-}
-
-function HourStrip({ day, hourLevels }: { day: DayAgg; hourLevels: number[] }) {
+function HourStrip({ day, hourLevels, baseDelay = 0 }: { day: DayAgg; hourLevels: number[]; baseDelay?: number }) {
   const hourly = day.hourlyTokens ?? new Array(24).fill(0);
   const colors: Record<number, string> = {
     0: "var(--dsw-alias-bg-layer-2, #ebedf0)",
@@ -124,9 +98,11 @@ function HourStrip({ day, hourLevels }: { day: DayAgg; hourLevels: number[] }) {
         return (
           <div
             key={h}
+            className="dtp-hm-bar"
             title={hh}
             aria-label={hh}
             style={{
+              animationDelay: `${baseDelay + h * 12}ms`,
               flex: 1,
               height: 6 + lv * 4,
               borderRadius: 1,
@@ -187,20 +163,6 @@ function ViewSwitcher({
   );
 }
 
-function MonthHeader({ weeks, cellSize }: { weeks: DayAgg[][]; cellSize: number }) {
-  const seen = new Set<string>();
-  return (
-    <div style={{ display: "flex", gap: 3, paddingLeft: cellSize + 20, marginBottom: 2 }}>
-      {weeks.map((week, i) => {
-        const m = week.find((d) => d.totalTokens !== -1)?.dayKey.slice(0, 7) ?? "";
-        let label = "";
-        if (m && !seen.has(m)) { seen.add(m); const n = Number(m.slice(5,7)); label = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][n-1]; }
-        return <span key={i} style={{ width: cellSize, fontSize: 10, color: "var(--dsw-alias-label-tertiary)", lineHeight: "12px", whiteSpace: "nowrap", overflow: "visible" }}>{label}</span>;
-      })}
-    </div>
-  );
-}
-
 function GitHubGrid({ days, t, cellSize, twoRows, isEn, dayLevels }: { days: DayAgg[]; t: (k: string, p?: any) => string; cellSize: number; twoRows?: boolean; isEn?: boolean; dayLevels: Map<string, number> }) {
   const weeks: DayAgg[][] = [];
   let cur: DayAgg[] = [];
@@ -223,72 +185,130 @@ function GitHubGrid({ days, t, cellSize, twoRows, isEn, dayLevels }: { days: Day
     weeks.push(cur);
   }
 
-  const renderWeeks = (ws: DayAgg[][]) => (
-    <div style={{ display: "flex", gap: cellSize >= 22 ? 10 : 5 }}>
-      {ws.map((week, wi) => (
-        <div key={wi} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          {week.map((d) =>
-            d.totalTokens === -1 ? (
-              <div key={d.dayKey} style={{ width: cellSize, height: cellSize }} />
-            ) : (
-              <HeatCell key={d.dayKey} day={d} level={dayLevels.get(d.dayKey) ?? 0} size={cellSize} />
-            ),
-          )}
-        </div>
-      ))}
-    </div>
-  );
+  const specHistoryRef = React.useRef(new Map<string, { x: number; y: number }>());
+  const labelHistoryRef = React.useRef(new Set<string>());
+  const gap = 3;
+  const colGap = cellSize >= 22 ? 10 : 5;
+  const headerH = 16;
+  const blockH = 7 * cellSize + 6 * gap;
+  const rowGap = 34;
+  const twoRowsSplit = !!(twoRows && weeks.length > 26);
+  const labelW = cellSize + 24;
 
-  if (twoRows && weeks.length > 26) {
+  const dayByKey = new Map(days.map((d) => [d.dayKey, d]));
+  const specs = new Map<string, { x: number; y: number }>();
+  const monthLabels: { key: string; x: number; y: number }[] = [];
+  const colX = (wi: number) => labelW + wi * (cellSize + colGap);
+  const place = (ws: DayAgg[][], yBase: number) => {
+    const seen = new Set<string>();
+    ws.forEach((week, wi) => {
+      const m = week.find((d) => d.totalTokens !== -1)?.dayKey.slice(0, 7) ?? "";
+      if (m && !seen.has(m)) {
+        seen.add(m);
+        monthLabels.push({ key: m, x: colX(wi), y: yBase - 14 });
+      }
+      week.forEach((d, r) => {
+        if (d.totalTokens === -1) return;
+        specs.set(d.dayKey, { x: colX(wi), y: yBase + r * (cellSize + gap) });
+      });
+    });
+  };
+
+  let ncols: number;
+  if (twoRowsSplit) {
     const mid = Math.ceil(weeks.length / 2);
     const top = weeks.slice(0, mid);
     const bot = weeks.slice(mid);
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 16, alignItems: "center" }}>
-        <div>
-          <MonthHeader weeks={top} cellSize={cellSize} />
-          <div style={{ display: "flex", gap: 3 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              <span style={{ height: cellSize, fontSize: cellSize >= 22 ? 13 : 10, color: "var(--dsw-alias-label-tertiary)", lineHeight: `${cellSize}px` }}>{isEn ? "Sun" : "Mon"}</span>
-              <span style={{ height: cellSize }} />
-              <span style={{ height: cellSize, fontSize: cellSize >= 22 ? 13 : 10, color: "var(--dsw-alias-label-tertiary)", lineHeight: `${cellSize}px` }}>{isEn ? "Tue" : "Wed"}</span>
-              <span style={{ height: cellSize }} />
-              <span style={{ height: cellSize, fontSize: cellSize >= 22 ? 13 : 10, color: "var(--dsw-alias-label-tertiary)", lineHeight: `${cellSize}px` }}>{isEn ? "Thu" : "Fri"}</span>
-              <span style={{ height: cellSize }} />
-              <span style={{ height: cellSize }} />
-            </div>
-            {renderWeeks(top)}
-          </div>
-        </div>
-        <div>
-          <MonthHeader weeks={bot} cellSize={cellSize} />
-          <div style={{ display: "flex", gap: 3 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              <span style={{ height: cellSize, fontSize: cellSize >= 22 ? 13 : 10, color: "var(--dsw-alias-label-tertiary)", lineHeight: `${cellSize}px` }}>{isEn ? "Sun" : "Mon"}</span>
-              <span style={{ height: cellSize }} />
-              <span style={{ height: cellSize, fontSize: cellSize >= 22 ? 13 : 10, color: "var(--dsw-alias-label-tertiary)", lineHeight: `${cellSize}px` }}>{isEn ? "Tue" : "Wed"}</span>
-              <span style={{ height: cellSize }} />
-              <span style={{ height: cellSize, fontSize: cellSize >= 22 ? 13 : 10, color: "var(--dsw-alias-label-tertiary)", lineHeight: `${cellSize}px` }}>{isEn ? "Thu" : "Fri"}</span>
-              <span style={{ height: cellSize }} />
-              <span style={{ height: cellSize }} />
-            </div>
-            {renderWeeks(bot)}
-          </div>
-        </div>
-      </div>
-    );
+    place(top, headerH);
+    place(bot, headerH + blockH + rowGap);
+    ncols = Math.max(top.length, bot.length);
+  } else {
+    place(weeks, headerH);
+    ncols = weeks.length;
   }
+  const width = labelW + ncols * cellSize + Math.max(0, ncols - 1) * colGap;
+  const height = twoRowsSplit ? headerH * 2 + blockH * 2 + rowGap : headerH + blockH;
+
+  // morph bookkeeping (refs survive quarter<->year switches because the grid
+  // stays mounted; on fresh mount history is empty so everything fades in)
+  const prevSpecs = specHistoryRef.current;
+  const items = [...specs.entries()].map(([k, s]) => ({ k, s, isNew: !prevSpecs.has(k) }));
+  specHistoryRef.current = new Map(specs);
+  const prevLabelKeys = labelHistoryRef.current;
+  const labelIsNew = (k: string) => !prevLabelKeys.has(k);
+  labelHistoryRef.current = new Set(monthLabels.map((m) => m.key));
+
+  const [ghosts, setGhosts] = React.useState<{ k: string; x: number; y: number }[]>([]);
+  React.useEffect(() => {
+    const removed: { k: string; x: number; y: number }[] = [];
+    for (const [k, s] of prevSpecs) if (!specs.has(k)) removed.push({ k, x: s.x, y: s.y });
+    if (removed.length) {
+      setGhosts(removed);
+      const id = setTimeout(() => setGhosts([]), 300);
+      return () => clearTimeout(id);
+    }
+  });
+
+  const colors: Record<number, string> = {
+    0: "var(--dsw-alias-bg-layer-2, #ebedf0)",
+    1: "#c6e48b",
+    2: "#7bc96f",
+    3: "#239a3b",
+    4: "#196127",
+  };
+  const dayNames = isEn ? ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"] : ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  const wdIdx = twoRowsSplit ? [0, 2, 4] : [0, 1, 2, 3, 4, 5, 6];
+  const wdFontSize = cellSize >= 22 ? 13 : 10;
+  const monthName = (m: string) => ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(m.slice(5, 7)) - 1];
 
   return (
-    <div style={{ overflowX: "auto", paddingBottom: 4, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-      <MonthHeader weeks={weeks} cellSize={cellSize} />
-      <div style={{ display: "flex", gap: cellSize >= 22 ? 10 : 5, justifyContent: "center" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: cellSize >= 22 ? 13 : 10, color: "var(--dsw-alias-label-tertiary)" }}>
-          {(isEn ? ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"] : ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]).map((w, i) => (
-            <span key={w} style={{ height: cellSize, lineHeight: `${cellSize}px`, textAlign: "right", paddingRight: 4, fontWeight: 500 }}>{w}</span>
-          ))}
-        </div>
-        {renderWeeks(weeks)}
+    <div style={{ overflowX: twoRowsSplit ? "auto" : "hidden", paddingBottom: 4, display: "flex", justifyContent: "center" }}>
+      <div style={{ position: "relative", width, height, flexShrink: 0 }}>
+        {monthLabels.map((m) => (
+          <span
+            key={m.key}
+            className={`dtp-hm-label${labelIsNew(m.key) ? " dtp-hm-new" : ""}`}
+            style={{ transform: `translate(${m.x}px, ${m.y}px)`, fontSize: 10, color: "var(--dsw-alias-label-tertiary)", lineHeight: "12px" }}
+          >
+            {monthName(m.key)}
+          </span>
+        ))}
+        {wdIdx.map((i) => ([
+          { y: headerH + i * (cellSize + gap), k: `top-${i}` },
+          ...(twoRowsSplit ? [{ y: headerH + blockH + rowGap + i * (cellSize + gap), k: `bot-${i}` }] : []),
+        ].map(({ y, k }) => (
+          <span
+            key={k}
+            className="dtp-hm-label"
+            style={{ transform: `translate(0px, ${y}px)`, fontSize: wdFontSize, width: labelW - 6, textAlign: "right", paddingRight: 4, color: "var(--dsw-alias-label-tertiary)", lineHeight: `${cellSize}px`, fontWeight: 500 }}
+          >
+            {dayNames[i]}
+          </span>
+        ))))}
+        {items.map(({ k, s, isNew }) => {
+          const d = dayByKey.get(k)!;
+          const lv = dayLevels.get(k) ?? 0;
+          return (
+            <div
+              key={k}
+              title={tooltipTotal(d)}
+              aria-label={tooltipTotal(d)}
+              className={`dtp-hm-cell${isNew ? " dtp-hm-new" : ""}`}
+              style={{ transform: `translate(${s.x}px, ${s.y}px)`, width: cellSize, height: cellSize, borderRadius: 3, background: colors[lv], border: lv === 0 ? "1px solid var(--dsw-alias-border-l2, #e5e7eb)" : "1px solid transparent" }}
+            />
+          );
+        })}
+        {ghosts.map((g) => {
+          const d = dayByKey.get(g.k);
+          const lv = d ? dayLevels.get(g.k) ?? 0 : 0;
+          return (
+            <div
+              key={g.k}
+              className="dtp-hm-cell dtp-hm-ghost"
+              style={{ transform: `translate(${g.x}px, ${g.y}px)`, width: cellSize, height: cellSize, borderRadius: 3, background: colors[lv] }}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -319,7 +339,7 @@ function CalendarGrid({ days, t, dayLevels, selectedKey, onSelect, isEn }: { day
     <div style={{ border: "1px solid var(--dsw-alias-border-l2)", borderRadius: 12, overflow: "hidden", background: "var(--dsw-alias-bg-layer-3)" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, padding: "8px 6px 6px" }}>
         {(isEn ? ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"] : header).map((w) => (
-          <div key={w} style={{ textAlign: "center", fontSize: 11, fontWeight: 500, color: "var(--dsw-alias-label-tertiary)" }}>
+          <div key={w} style={{ textAlign: "center", fontSize: 10, fontWeight: 500, color: "var(--dsw-alias-label-tertiary)" }}>
             {w}
           </div>
         ))}
@@ -361,6 +381,21 @@ function CalendarGrid({ days, t, dayLevels, selectedKey, onSelect, isEn }: { day
   );
 }
 
+const HM_ANIM_CSS = `
+@keyframes dtp-hm-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes dtp-hm-row { from { opacity: 0; transform: translateX(-14px); } }
+@keyframes dtp-hm-grow { from { transform: scaleY(0); } }
+@keyframes dtp-hm-fade { from { opacity: 0; } }
+@keyframes dtp-hm-fadeout { to { opacity: 0; } }
+.dtp-hm-view { animation: dtp-hm-in 0.4s ease; }
+.dtp-hm-row { animation: dtp-hm-row 0.4s ease both; }
+.dtp-hm-bar { transform-origin: bottom; animation: dtp-hm-grow 0.45s ease both; }
+.dtp-hm-cell { position: absolute; box-sizing: border-box; transition: transform 0.45s ease, width 0.45s ease, height 0.45s ease, opacity 0.45s ease; }
+.dtp-hm-new { animation: dtp-hm-fade 0.45s ease both; }
+.dtp-hm-ghost { animation: dtp-hm-fadeout 0.25s ease forwards; }
+.dtp-hm-label { position: absolute; white-space: nowrap; transition: transform 0.45s ease, opacity 0.45s ease; }
+`;
+
 export function HeatmapGrid({
   t,
   days,
@@ -393,6 +428,7 @@ export function HeatmapGrid({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <style>{HM_ANIM_CSS}</style>
       <ViewSwitcher t={t} value={view} onChange={handleViewChange} />
 
       {!hasAny ? (
@@ -411,8 +447,8 @@ export function HeatmapGrid({
       ) : null}
 
       {isWeek ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-          {days.map((d) => {
+        <div key="week" style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          {days.map((d, di) => {
             const wd = new Date(d.dayKey + "T12:00:00+08:00").getDay();
             const weekday = isEn
               ? ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][wd]
@@ -421,9 +457,11 @@ export function HeatmapGrid({
             return (
               <button
                 key={d.dayKey}
+                className="dtp-hm-row"
                 onClick={() => onSelect?.(sel ? null : d.dayKey)}
                 title={tooltipTotal(d)}
                 style={{
+                  animationDelay: `${di * 45}ms`,
                   display: "flex", alignItems: "center", gap: 10, minWidth: 0, width: "100%",
                   padding: "6px 8px", borderRadius: 8,
                   border: sel ? "1px solid var(--dsw-alias-brand-primary)" : "1px solid transparent",
@@ -435,7 +473,7 @@ export function HeatmapGrid({
                   <span style={{ fontSize: 12, fontWeight: 600, color: "var(--dsw-alias-label-primary)", lineHeight: "16px" }}>{weekday}</span>
                   <span style={{ fontSize: 10, color: "var(--dsw-alias-label-tertiary)", lineHeight: "12px" }}>{d.dayKey.slice(5)}</span>
                 </div>
-                <HourStrip day={d} hourLevels={hourLevels.get(d.dayKey) ?? new Array(24).fill(0)} />
+                <HourStrip day={d} hourLevels={hourLevels.get(d.dayKey) ?? new Array(24).fill(0)} baseDelay={di * 45 + 140} />
                 <span style={{ fontSize: 11, color: "var(--dsw-alias-label-tertiary)", whiteSpace: "nowrap", width: 80, textAlign: "right" }}>
                   {d.totalTokens === 0 ? "No usage" : `${formatTokensShort(d.totalTokens)} tokens`}
                 </span>
@@ -444,11 +482,13 @@ export function HeatmapGrid({
           })}
         </div>
       ) : view === "month" ? (
-        <CalendarGrid days={days} t={t} dayLevels={dayLevels} selectedKey={selectedKey ?? null} onSelect={onSelect ?? (() => {})} isEn={isEn} />
-      ) : view === "year" ? (
-        <GitHubGrid days={days} t={t} cellSize={cellSize} twoRows isEn={isEn} dayLevels={dayLevels} />
+        <div key="month" className="dtp-hm-view">
+          <CalendarGrid days={days} t={t} dayLevels={dayLevels} selectedKey={selectedKey ?? null} onSelect={onSelect ?? (() => {})} isEn={isEn} />
+        </div>
       ) : (
-        <GitHubGrid days={days} t={t} cellSize={cellSize} isEn={isEn} dayLevels={dayLevels} />
+        <div key="github" className="dtp-hm-view">
+          <GitHubGrid days={days} t={t} cellSize={cellSize} twoRows={view === "year"} isEn={isEn} dayLevels={dayLevels} />
+        </div>
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>

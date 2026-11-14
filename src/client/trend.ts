@@ -174,9 +174,13 @@ export function seriesPath(points: Array<[number, number]>): string {
  * has an identical command count no matter how many days it represents, so
  * CSS `transition: d` can morph lines across range switches too — where raw
  * bezier paths (M + n-1 C) have mismatched structures and would jump.
- * Visual output is indistinguishable at this density.
+ *
+ * Default density 712 = 8 × 89 keeps the polyline visually identical to the
+ * spline (≥ 8 samples per data interval for a 90-day series — the sparse 89
+ * sample grid cut spike corners and left dots floating above the line) while
+ * letting a 90-day series' sample xs land exactly ON its data points.
  */
-export function seriesPathFixed(points: Array<[number, number]>, samples = 89): string {
+export function seriesPathFixed(points: Array<[number, number]>, samples = 712): string {
   if (points.length === 0) return "";
   const x0 = points[0][0];
   const x1 = points[points.length - 1][0];
