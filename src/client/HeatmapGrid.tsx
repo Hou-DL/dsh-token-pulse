@@ -262,8 +262,8 @@ function GitHubGrid({ days, t, cellSize, twoRows, isEn, dayLevels }: { days: Day
   const monthName = (m: string) => ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(m.slice(5, 7)) - 1];
 
   return (
-    <div style={{ overflowX: twoRowsSplit ? "auto" : "hidden", paddingBottom: 4, display: "flex", justifyContent: "center" }}>
-      <div style={{ position: "relative", width, height, flexShrink: 0 }}>
+    <div className="dtp-hm-scroll" style={{ overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4, display: "flex" }}>
+      <div style={{ position: "relative", width, height, flexShrink: 0, margin: "0 auto" }}>
         {monthLabels.map((m) => (
           <span
             key={m.key}
@@ -393,6 +393,8 @@ const HM_ANIM_CSS = `
 .dtp-hm-cell { position: absolute; box-sizing: border-box; transition: transform 0.45s ease, width 0.45s ease, height 0.45s ease, opacity 0.45s ease; }
 .dtp-hm-new { animation: dtp-hm-fade 0.45s ease both; }
 .dtp-hm-ghost { animation: dtp-hm-fadeout 0.25s ease forwards; }
+.dtp-hm-scroll { scrollbar-width: none; }
+.dtp-hm-scroll::-webkit-scrollbar { display: none; }
 .dtp-hm-label { position: absolute; white-space: nowrap; transition: transform 0.45s ease, opacity 0.45s ease; }
 `;
 
